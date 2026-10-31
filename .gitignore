@@ -11,6 +11,7 @@
 *.weights
 
 # Layer 1 & Layer 2 Model / Index Directories
+distilbert_prompt_injection/
 ai_engine/layer1/models/
 ai_engine/layer2/index_storage/
 **/models/
