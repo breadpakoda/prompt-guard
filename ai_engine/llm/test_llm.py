@@ -11,6 +11,7 @@ and without latency.
 from __future__ import annotations
 
 import asyncio
+import math
 import os
 import sys
 from unittest.mock import AsyncMock, MagicMock, patch
@@ -86,6 +87,32 @@ async def test_normal_prompt_returns_llm_response(client):
     assert body["conversation_id"] == "conv-001"
     assert body["response"] == "The capital of France is Paris."
     assert body["l3_triggered"] is False
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize(
+    "prompt",
+    ["Hi!", "hello", "hello there", "hey there", "Good morning."],
+)
+async def test_common_greeting_is_not_misclassified_as_injection(client, prompt):
+    mock_llm = MagicMock()
+    mock_llm.invoke.return_value = make_llm_response("Hi! How can I help?")
+
+    with patch("ai_engine.llm.bot._llm", mock_llm), \
+         patch("ai_engine.llm.bot._run_layer1", side_effect=AssertionError("greeting should bypass false-positive detector")), \
+         patch("ai_engine.llm.bot._run_layer2", side_effect=AssertionError("greeting should bypass false-positive detector")):
+        resp = await client.post("/chat", json={
+             "prompt": f"  {prompt}  ",
+            "conversation_id": "conv-safe-greeting",
+        })
+
+    assert resp.status_code == 200
+    body = resp.json()
+    assert body["prompt_injection_detected"] is False
+    assert body["response"] == "Hi! How can I help?"
+    assert body["layer1_score"] == 0.0
+    assert body["layer2_score"] == pytest.approx(0.0)
+    assert body["combined_score"] == pytest.approx(1 / (1 + math.exp(9)))
 
 
 # ── Test 2: Conversation history is tracked ───────────────────────────────────

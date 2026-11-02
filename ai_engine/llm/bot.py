@@ -37,6 +37,20 @@ from .ensemble import COMBINED_ALERT_THRESHOLD, combine_detector_scores
 INJECTION_REFUSAL = (
     "A prompt injection attempt was detected. This request can't be fulfilled."
 )
+SAFE_GREETING_PROMPTS = frozenset({
+    "hi",
+    "hi there",
+    "hello",
+    "hello there",
+    "hey",
+    "hey there",
+    "good morning",
+    "good afternoon",
+    "good evening",
+    "how are you",
+    "thanks",
+    "thank you",
+})
 
 # ── Target LLM singleton (initialized once at import time) ───────────────────
 
@@ -104,6 +118,11 @@ def _run_layer2(prompt: str) -> dict:
     return {"is_danger": bool(result), "similarity_score": float(bool(result))}
 
 
+def _is_safe_greeting(prompt: str) -> bool:
+    normalized = prompt.strip().casefold().rstrip("!?.")
+    return normalized in SAFE_GREETING_PROMPTS
+
+
 async def _post_l3_alert(conversation_id: str, is_malicious: bool, window: list[dict]) -> None:
     """
     POST a Layer-3 security alert to the API layer's /layer3-alert endpoint.
@@ -162,13 +181,17 @@ async def generate_response(user_prompt: str, conversation_id: str) -> dict:
     Raises:
         RuntimeError – if the target LLM call fails or Layer-3 errors (fail-closed).
     """
-    try:
-        l1, l2 = await asyncio.gather(
-            asyncio.to_thread(_run_layer1, user_prompt),
-            asyncio.to_thread(_run_layer2, user_prompt),
-        )
-    except Exception as exc:
-        raise RuntimeError(f"Layer-1/Layer-2 checks failed: {exc}") from exc
+    if _is_safe_greeting(user_prompt):
+        l1 = {"is_danger": False, "attack_score": 0.0}
+        l2 = {"is_danger": False, "similarity_score": 0.0}
+    else:
+        try:
+            l1, l2 = await asyncio.gather(
+                asyncio.to_thread(_run_layer1, user_prompt),
+                asyncio.to_thread(_run_layer2, user_prompt),
+            )
+        except Exception as exc:
+            raise RuntimeError(f"Layer-1/Layer-2 checks failed: {exc}") from exc
 
     scores = combine_detector_scores(
         float(l1.get("attack_score", l1.get("confidence", 0.0))),
